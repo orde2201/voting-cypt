@@ -7,7 +7,8 @@ import psycopg2
 from psycopg2 import Binary
 from collections import Counter
 import json
-from typing import Dict, List, Any
+import base64
+from typing import Dict, List, Any, Optional
 
 ###JANGAN DIHAPUS, INI UNTUK GENERATE KEY RSA, JALANKAN SEKALI SAJA LALU HAPUS FILE PEMNYA
 #import RSA_key_gen 
@@ -17,14 +18,13 @@ app = FastAPI()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],  # Tambahkan port Vite
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 ##SETUP DATABASE CONNECTION
-##database untuk menampung vote yang sudah diencrypt dan hashnya
 def get_conn_vote():
     return psycopg2.connect(
         dbname="votedata",
@@ -34,7 +34,6 @@ def get_conn_vote():
         port="5432"
     )
 
-##database untuk menampung hash dari vote yang sudah diencrypt, digunakan untuk verifikasi hasil vote
 def get_conn_verify():
     return psycopg2.connect(
         dbname="verify_vote",
@@ -44,7 +43,6 @@ def get_conn_verify():
         port="5432"
     )
 
-##database untuk menampung data user, digunakan untuk login
 def get_conn_login():
     return psycopg2.connect(
         dbname="userdata",
@@ -54,7 +52,6 @@ def get_conn_login():
         port="5432"
     )
 
-##Tempat variabel yang digunakan untuk menyimpan data vote dari frontend
 class Vote(BaseModel):
     nama: str
     nim: str
@@ -64,12 +61,22 @@ class LoginRequest(BaseModel):
     nim: str
     password: str
 
-# Store login session (in production, use JWT token or Redis)
-# Untuk demo sederhana, kita simpan sementara
-active_sessions: Dict[str, str] = {}  # {nim: status}
+##-----------------------------------------
+## HELPER FUNCTION UNTUK HANDLE BYTES KE STRING
+##-----------------------------------------
+def bytes_to_string(data):
+    """Convert bytes/memoryview to string for hashing"""
+    if isinstance(data, memoryview):
+        data = data.tobytes()
+    if isinstance(data, bytes):
+        # Encode bytes to base64 string for consistent hashing
+        return base64.b64encode(data).decode('utf-8')
+    if isinstance(data, str):
+        return data
+    return str(data)
 
 ##-----------------------------------------
-## TAHAP 1: Menerima data vote dari frontend lalu menyimpan ke database
+## TAHAP 1: LOGIN
 ##-----------------------------------------
 @app.post("/login")
 def login(data: LoginRequest):
@@ -90,13 +97,11 @@ def login(data: LoginRequest):
         db_password, status = user
 
         if data.password == db_password:
-            # Simpan session (dalam production pake JWT)
-            # Untuk sekarang, kita return nim dan status
             return {
                 "success": True,
                 "message": "Login berhasil",
                 "status": status,
-                "nim": data.nim  # Kirim nim kembali ke frontend
+                "nim": data.nim
             }
 
         return {"success": False, "message": "Password salah"}
@@ -105,9 +110,11 @@ def login(data: LoginRequest):
         cur.close()
         conn.close()
 
+##-----------------------------------------
+## TAHAP 2: VOTE (Hash data asli, lalu encrypt)
+##-----------------------------------------
 @app.post("/vote")
 def submit_vote(vote: Vote):
-    # Validasi 1: Cek apakah NIM sudah pernah melakukan vote
     conn_vote = get_conn_vote()
     cur_vote = conn_vote.cursor()
     
@@ -122,10 +129,10 @@ def submit_vote(vote: Vote):
         if existing_vote:
             return {
                 "success": False, 
-                "message": "Anda sudah melakukan vote sebelumnya! Tidak dapat vote lagi."
+                "message": "Anda sudah melakukan vote sebelumnya!"
             }
         
-        # Validasi 2: Cek apakah NIM terdaftar di database user
+        # Cek apakah NIM terdaftar
         conn_login = get_conn_login()
         cur_login = conn_login.cursor()
         
@@ -144,29 +151,33 @@ def submit_vote(vote: Vote):
                 "message": "NIM tidak terdaftar! Silahkan login terlebih dahulu."
             }
         
-        # Proses vote jika validasi berhasil
-        # Melakukan enkripsi pada data vote yang diterima dari frontend
-        encrypted_vote = RSAEncryptor().encrypt(
-            vote.model_dump_json()
-        )
+        # STEP 1: Buat JSON string dari data vote
+        vote_json = vote.model_dump_json()
+        print(f"Original vote JSON: {vote_json}")  # Debug
         
-        # Menghitung hash dari data vote yang sudah diencrypt
-        vote_hash = hash_message(encrypted_vote)
+        # STEP 2: Hashing data ASLI (sebelum encrypt) - pastikan dalam bentuk string
+        original_hash = hash_message(vote_json)  # vote_json sudah string
+        print(f"Original hash: {original_hash}")  # Debug
+        
+        # STEP 3: Enkripsi data vote asli (hasilkan bytes)
+        rsa_encryptor = RSAEncryptor()
+        encrypted_vote = rsa_encryptor.encrypt(vote_json)
+        print(f"Encrypted vote type: {type(encrypted_vote)}")  # Debug
 
         conn_verify = get_conn_verify()
         cur_verify = conn_verify.cursor()
 
         try:
-            # Insert ke database uservote, menyimpan data vote yang sudah diencrypt beserta hashnya
+            # STEP 4: Simpan encrypted vote ke database (sebagai bytes)
             cur_vote.execute(
-                "INSERT INTO userVote (voter_id, vote, vote_hash) VALUES (%s, %s, %s)",
-                (vote.nim, Binary(encrypted_vote), vote_hash)
+                "INSERT INTO userVote (voter_id, vote) VALUES (%s, %s)",
+                (vote.nim, Binary(encrypted_vote))
             )
 
-            # Insert ke database hashing, menyimpan hash dari data vote yang sudah diencrypt
+            # STEP 5: Simpan hash asli ke database verify_vote
             cur_verify.execute(
                 "INSERT INTO hashing (vote_id, hash) VALUES (%s, %s)",
-                (vote.nim, vote_hash)
+                (vote.nim, original_hash)
             )
 
             conn_vote.commit()
@@ -174,13 +185,13 @@ def submit_vote(vote: Vote):
 
             return {
                 "success": True, 
-                "message": "Vote berhasil dikirim",
-                "vote_hash": vote_hash
+                "message": "Vote berhasil dikirim"
             }
 
         except Exception as e:
             conn_vote.rollback()
             conn_verify.rollback()
+            print(f"Database error: {e}")
             return {"success": False, "error": str(e)}
 
         finally:
@@ -188,15 +199,15 @@ def submit_vote(vote: Vote):
             conn_verify.close()
 
     except Exception as e:
+        print(f"Vote error: {e}")
         return {"success": False, "error": str(e)}
     
     finally:
         cur_vote.close()
         conn_vote.close()
 
-
 ##-----------------------------------------
-## TAHAP 2: REKAP HASIL VOTE DENGAN VALIDASI HASH
+## TAHAP 3: RECAP (Decrypt, hash hasil decrypt, bandingkan)
 ##-----------------------------------------
 @app.get("/recap")
 def recap_vote():
@@ -206,100 +217,112 @@ def recap_vote():
     cur_vote = conn_vote.cursor()
     cur_verify = conn_verify.cursor()
 
-    # Untuk menyimpan hasil yang valid dan yang bermasalah
-    valid_votes: List[str] = []
+    valid_votes: List[Dict[str, Any]] = []
     invalid_votes: List[Dict[str, Any]] = []
+    missing_hash: List[Dict[str, Any]] = []
     kandidat_list = []
 
     try:
         # Ambil semua data vote
-        cur_vote.execute("SELECT voter_id, vote, vote_hash FROM uservote")
+        cur_vote.execute("SELECT voter_id, vote FROM uservote")
         rows = cur_vote.fetchall()
 
         # Ambil semua hash dari database verifikasi
         cur_verify.execute("SELECT vote_id, hash FROM hashing")
         hash_records = {vote_id: hash_val for vote_id, hash_val in cur_verify.fetchall()}
 
-        decryptor = RSAEncryptor()
+        rsa_decryptor = RSAEncryptor()
 
-        for voter_id, encrypted_vote, stored_hash in rows:
+        print(f"\n=== RECAP PROCESS ===")
+        print(f"Total votes in DB: {len(rows)}")
+        print(f"Total hashes in verify DB: {len(hash_records)}")
+
+        for voter_id, encrypted_vote in rows:
             try:
-                # Handle memoryview conversion
+                # Convert memoryview to bytes if needed
                 if isinstance(encrypted_vote, memoryview):
                     encrypted_vote = encrypted_vote.tobytes()
-
-                # Validasi hash: bandingkan hash yang tersimpan dengan hash dari database verifikasi
-                expected_hash = hash_records.get(voter_id)
                 
-                if stored_hash != expected_hash:
-                    # Hash tidak cocok - data telah dimanipulasi
-                    invalid_votes.append({
-                        "nim": voter_id,
-                        "reason": "Hash mismatch - Data telah dimanipulasi",
-                        "stored_hash": stored_hash,
-                        "expected_hash": expected_hash
-                    })
-                    print(f"WARNING: Hash mismatch untuk NIM {voter_id}")
-                    continue
+                print(f"\nProcessing NIM: {voter_id}")
                 
-                # Re-verify hash dari encrypted vote saat ini
-                current_hash = hash_message(encrypted_vote)
-                if current_hash != stored_hash:
-                    invalid_votes.append({
-                        "nim": voter_id,
-                        "reason": "Hash verification failed - Encrypted vote telah berubah",
-                        "stored_hash": stored_hash,
-                        "current_hash": current_hash
-                    })
-                    print(f"WARNING: Hash verification failed untuk NIM {voter_id}")
-                    continue
-
-                # Jika hash valid, decrypt dan hitung vote
-                decrypted = decryptor.decrypt(encrypted_vote)
-                data = json.loads(decrypted)
+                # STEP 1: Decrypt encrypted vote (hasil decrypt adalah string JSON)
+                decrypted_json = rsa_decryptor.decrypt(encrypted_vote)
+                print(f"Decrypted JSON: {decrypted_json}")
                 
-                # Validasi tambahan: cek apakah NIM dalam vote sama dengan voter_id
-                if data.get("nim") != voter_id:
-                    invalid_votes.append({
+                # STEP 2: Hash hasil decrypt (string JSON)
+                decrypted_hash = hash_message(decrypted_json)
+                print(f"Decrypted hash: {decrypted_hash}")
+                
+                # STEP 3: Ambil hash yang tersimpan di database
+                stored_hash = hash_records.get(voter_id)
+                print(f"Stored hash: {stored_hash}")
+                
+                if stored_hash is None:
+                    missing_hash.append({
                         "nim": voter_id,
-                        "reason": f"NIM mismatch - Vote untuk NIM {data.get('nim')} tapi disimpan sebagai {voter_id}"
+                        "reason": "Hash tidak ditemukan di database verify_vote"
                     })
                     continue
                 
-                # Jika semua validasi lolos
-                valid_votes.append(voter_id)
-                kandidat_list.append(data["kandidat"])
+                # STEP 4: Bandingkan hash
+                if decrypted_hash != stored_hash:
+                    invalid_votes.append({
+                        "nim": voter_id,
+                        "reason": "Hash mismatch - Data vote telah berubah",
+                        "computed_hash": decrypted_hash,
+                        "stored_hash": stored_hash
+                    })
+                    continue
+                
+                # STEP 5: Parse JSON dan validasi
+                vote_data = json.loads(decrypted_json)
+                
+                if vote_data.get("nim") != voter_id:
+                    invalid_votes.append({
+                        "nim": voter_id,
+                        "reason": f"NIM mismatch - Data untuk {vote_data.get('nim')}"
+                    })
+                    continue
+                
+                # Vote valid
+                valid_votes.append({
+                    "nim": voter_id,
+                    "kandidat": vote_data["kandidat"],
+                    "nama": vote_data["nama"]
+                })
+                kandidat_list.append(vote_data["kandidat"])
+                print(f"✅ VALID: {voter_id} -> {vote_data['kandidat']}")
 
             except Exception as e:
+                print(f"❌ Error: {e}")
                 invalid_votes.append({
                     "nim": voter_id,
-                    "reason": f"Decryption/Parse error: {str(e)}"
+                    "reason": f"Error: {str(e)}"
                 })
-                print(f"Error processing vote for {voter_id}: {e}")
-                continue
 
-        # Hitung hasil dari vote yang valid
         counter = Counter(kandidat_list)
 
         result = {
             "total_valid": len(valid_votes),
             "total_invalid": len(invalid_votes),
-            "total_votes": len(valid_votes) + len(invalid_votes),
+            "total_missing_hash": len(missing_hash),
+            "total_votes": len(rows),
             "hasil": dict(counter),
-            "valid_voters": valid_votes,
-            "invalid_votes": invalid_votes  # Informasi NIM yang bermasalah
+            "valid_voters": [v["nim"] for v in valid_votes],
+            "invalid_votes": invalid_votes,
+            "missing_hash": missing_hash
         }
 
-        # Jika ada vote yang tidak valid, tampilkan peringatan
-        if invalid_votes:
-            print(f"PERINGATAN: Ditemukan {len(invalid_votes)} vote yang tidak valid!")
-            for inv in invalid_votes:
-                print(f"  - NIM {inv['nim']}: {inv['reason']}")
+        print(f"\n=== SUMMARY ===")
+        print(f"Valid: {result['total_valid']}")
+        print(f"Invalid: {result['total_invalid']}")
+        print(f"Missing: {result['total_missing_hash']}")
 
         return result
 
     except Exception as e:
-        return {"error": str(e), "total_valid": 0, "total_invalid": 0, "hasil": {}}
+        print(f"Recap error: {e}")
+        return {"error": str(e), "total_valid": 0, "total_invalid": 0, "total_missing_hash": 0, "hasil": {}}
 
     finally:
         cur_vote.close()
@@ -308,11 +331,10 @@ def recap_vote():
         conn_verify.close()
 
 ##-----------------------------------------
-## ENDPOINT TAMBAHAN UNTUK CEK STATUS VOTE
+## ENDPOINT CEK STATUS VOTE
 ##-----------------------------------------
 @app.get("/check-vote-status/{nim}")
 def check_vote_status(nim: str):
-    """Cek apakah NIM sudah melakukan vote"""
     conn = get_conn_vote()
     cur = conn.cursor()
     
@@ -329,63 +351,52 @@ def check_vote_status(nim: str):
         conn.close()
 
 ##-----------------------------------------
-## ENDPOINT UNTUK VERIFIKASI MANUAL (ADMIN)
+## ENDPOINT VERIFIKASI SEMUA HASH
 ##-----------------------------------------
 @app.get("/verify-all-hashes")
 def verify_all_hashes():
-    """Verifikasi semua hash untuk keperluan audit"""
     conn_vote = get_conn_vote()
     conn_verify = get_conn_verify()
     
     cur_vote = conn_vote.cursor()
     cur_verify = conn_verify.cursor()
     
-    verification_results = {
-        "total_checked": 0,
+    results = {
+        "total": 0,
         "valid": 0,
         "invalid": [],
-        "missing_in_verify_db": []
+        "missing": []
     }
     
     try:
-        cur_vote.execute("SELECT voter_id, vote, vote_hash FROM uservote")
+        cur_vote.execute("SELECT voter_id, vote FROM uservote")
         votes = cur_vote.fetchall()
         
         cur_verify.execute("SELECT vote_id, hash FROM hashing")
-        verify_records = dict(cur_verify.fetchall())
+        hashes = dict(cur_verify.fetchall())
         
-        for voter_id, encrypted_vote, stored_hash in votes:
-            verification_results["total_checked"] += 1
+        rsa_decryptor = RSAEncryptor()
+        
+        for voter_id, encrypted_vote in votes:
+            results["total"] += 1
             
-            if voter_id not in verify_records:
-                verification_results["missing_in_verify_db"].append(voter_id)
-                continue
+            if isinstance(encrypted_vote, memoryview):
+                encrypted_vote = encrypted_vote.tobytes()
             
-            expected_hash = verify_records[voter_id]
-            
-            if stored_hash != expected_hash:
-                verification_results["invalid"].append({
-                    "nim": voter_id,
-                    "stored": stored_hash,
-                    "expected": expected_hash
-                })
-            else:
-                # Re-verify current hash
-                if isinstance(encrypted_vote, memoryview):
-                    encrypted_vote = encrypted_vote.tobytes()
-                current_hash = hash_message(encrypted_vote)
+            try:
+                decrypted = rsa_decryptor.decrypt(encrypted_vote)
+                computed_hash = hash_message(decrypted)
                 
-                if current_hash != stored_hash:
-                    verification_results["invalid"].append({
-                        "nim": voter_id,
-                        "reason": "Current hash mismatch",
-                        "stored": stored_hash,
-                        "current": current_hash
-                    })
+                if voter_id not in hashes:
+                    results["missing"].append(voter_id)
+                elif computed_hash != hashes[voter_id]:
+                    results["invalid"].append(voter_id)
                 else:
-                    verification_results["valid"] += 1
+                    results["valid"] += 1
+            except Exception as e:
+                results["invalid"].append(voter_id)
         
-        return verification_results
+        return results
         
     finally:
         cur_vote.close()

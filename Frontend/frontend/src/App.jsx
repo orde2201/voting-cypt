@@ -9,15 +9,16 @@ import AdminRoute from "./AdminRoute"
 function App() {
   const [isAuth, setIsAuth] = useState(false)
   const [role, setRole] = useState(null)
-  const [userNim, setUserNim] = useState(null) // Simpan NIM user yang login
+  const [userNim, setUserNim] = useState(null)
   const navigate = useNavigate()
 
-  // Cek localStorage saat component mount
   useEffect(() => {
     const checkAuth = () => {
       const auth = localStorage.getItem("auth")
       const userRole = localStorage.getItem("role")
       const nim = localStorage.getItem("nim")
+      
+      console.log("Check Auth - NIM:", nim) // Debug
       
       setIsAuth(auth === "true")
       setRole(userRole)
@@ -27,7 +28,6 @@ function App() {
     checkAuth()
   }, [])
 
-  // Fungsi untuk logout
   const handleLogout = () => {
     localStorage.removeItem("auth")
     localStorage.removeItem("role")
@@ -43,7 +43,6 @@ function App() {
       <nav style={{ marginBottom: "20px" }}>
         <Link to="/" style={{ marginRight: "10px" }}>Vote</Link>
         
-        {/* Hanya admin yang bisa lihat link Recap */}
         {isAuth && role === "admin" && (
           <Link to="/recap" style={{ marginRight: "10px" }}>Recap</Link>
         )}
@@ -62,14 +61,13 @@ function App() {
 
       <Routes>
         <Route path="/login" element={<Login onLoginSuccess={(nim, role) => {
-          // Update state setelah login berhasil
+          console.log("Login success callback - NIM:", nim) // Debug
           setIsAuth(true)
           setRole(role)
           setUserNim(nim)
           navigate("/")
         }} />} />
         
-        {/* Route untuk voting - semua user yang sudah login bisa akses */}
         <Route
           path="/"
           element={
@@ -79,7 +77,6 @@ function App() {
           }
         />
 
-        {/* Route untuk recap - HANYA ADMIN yang bisa akses */}
         <Route
           path="/recap"
           element={
@@ -107,15 +104,22 @@ function VoteForm({ userNim }) {
   const [loading, setLoading] = useState(false)
   const [checking, setChecking] = useState(true)
 
+  // Debug: log userNim yang diterima
+  useEffect(() => {
+    console.log("VoteForm received userNim:", userNim)
+  }, [userNim])
+
   // Cek apakah user sudah pernah vote
   useEffect(() => {
     const checkVoteStatus = async () => {
       if (!userNim) {
+        console.log("No userNim, skipping vote status check")
         setChecking(false)
         return
       }
 
       try {
+        console.log("Checking vote status for NIM:", userNim)
         const res = await fetch(`${API_CHECK_VOTE}/${userNim}`)
         const data = await res.json()
         
@@ -135,12 +139,12 @@ function VoteForm({ userNim }) {
   // Set NIM dari user yang login (tidak bisa diubah)
   useEffect(() => {
     if (userNim) {
+      console.log("Setting NIM in form:", userNim)
       setFormData(prev => ({ ...prev, nim: userNim }))
     }
   }, [userNim])
 
   const handleChange = (e) => {
-    // NIM tidak bisa diubah, hanya field lain yang bisa
     if (e.target.name === "nim") return
     
     setFormData({
@@ -153,6 +157,8 @@ function VoteForm({ userNim }) {
     e.preventDefault()
     setLoading(true)
 
+    console.log("Submitting vote with data:", formData) // Debug
+
     try {
       const res = await fetch(API_VOTE, {
         method: "POST",
@@ -161,7 +167,7 @@ function VoteForm({ userNim }) {
       })
 
       const data = await res.json()
-      console.log(data)
+      console.log("Vote response:", data)
 
       if (data.success) {
         alert("✅ Vote berhasil dikirim!")
@@ -172,7 +178,7 @@ function VoteForm({ userNim }) {
       }
 
     } catch (err) {
-      console.error(err)
+      console.error("Vote error:", err)
       alert("❌ Gagal mengirim vote: " + err.message)
     } finally {
       setLoading(false)
@@ -189,6 +195,15 @@ function VoteForm({ userNim }) {
         <h1>✅ Terima Kasih!</h1>
         <p>Anda sudah melakukan vote dengan NIM: <strong>{userNim}</strong></p>
         <p>Vote Anda sudah tercatat dan tidak dapat diubah.</p>
+      </div>
+    )
+  }
+
+  if (!userNim) {
+    return (
+      <div>
+        <h1>⚠️ Error</h1>
+        <p>Anda belum login. Silahkan <Link to="/login">login</Link> terlebih dahulu.</p>
       </div>
     )
   }
@@ -278,9 +293,8 @@ function Recap() {
       const json = await res.json()
       setData(json)
       
-      // Jika ada invalid votes, tampilkan warning
-      if (json.total_invalid > 0) {
-        console.warn("⚠️ Ditemukan vote yang tidak valid:", json.invalid_votes)
+      if (json.total_invalid > 0 || json.total_missing_hash > 0) {
+        console.warn("⚠️ Ditemukan masalah:", json)
       }
     } catch (err) {
       console.error(err)
@@ -302,7 +316,6 @@ function Recap() {
     return <h2>No data available</h2>
   }
 
-  // Jika ada error dari backend
   if (data.error) {
     return (
       <div>
@@ -318,14 +331,13 @@ function Recap() {
     <div>
       <h1>📊 Hasil Voting (Admin Only)</h1>
 
-      {/* Summary Cards */}
       <div style={{ display: "flex", gap: "20px", marginBottom: "30px", flexWrap: "wrap" }}>
         <SummaryCard title="Total Vote" value={data.total_votes || 0} color="#3498db" />
         <SummaryCard title="Vote Valid" value={data.total_valid || 0} color="#2ecc71" />
         <SummaryCard title="Vote Invalid" value={data.total_invalid || 0} color="#e74c3c" />
+        <SummaryCard title="Hash Missing" value={data.total_missing_hash || 0} color="#f39c12" />
       </div>
 
-      {/* Hasil Kandidat */}
       <h2>Perolehan Suara</h2>
       <div style={{ display: "flex", gap: "20px", flexWrap: "wrap", marginBottom: "30px" }}>
         <Card label="Kandidat A" value={data.hasil?.A || 0} />
@@ -333,8 +345,7 @@ function Recap() {
         <Card label="Kandidat C" value={data.hasil?.C || 0} />
       </div>
 
-      {/* Warning jika ada invalid votes */}
-      {data.total_invalid > 0 && (
+      {(data.total_invalid > 0 || data.total_missing_hash > 0) && (
         <div style={{ 
           border: "2px solid #e74c3c", 
           padding: "20px", 
@@ -342,7 +353,7 @@ function Recap() {
           marginBottom: "20px",
           backgroundColor: "#fee"
         }}>
-          <h3 style={{ color: "#e74c3c" }}>⚠️ Peringatan: Ditemukan {data.total_invalid} Vote Tidak Valid!</h3>
+          <h3 style={{ color: "#e74c3c" }}>⚠️ Peringatan: Ditemukan Masalah!</h3>
           <button 
             onClick={() => setShowInvalid(!showInvalid)}
             style={{ marginBottom: "10px", padding: "5px 10px", cursor: "pointer" }}
@@ -352,43 +363,53 @@ function Recap() {
           
           {showInvalid && (
             <div style={{ marginTop: "10px" }}>
-              <h4>Daftar NIM yang bermasalah:</h4>
-              <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                <thead>
-                  <tr>
-                    <th style={{ border: "1px solid #ddd", padding: "8px", textAlign: "left" }}>NIM</th>
-                    <th style={{ border: "1px solid #ddd", padding: "8px", textAlign: "left" }}>Alasan</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.invalid_votes?.map((inv, idx) => (
-                    <tr key={idx}>
-                      <td style={{ border: "1px solid #ddd", padding: "8px" }}>{inv.nim}</td>
-                      <td style={{ border: "1px solid #ddd", padding: "8px" }}>{inv.reason}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+              {data.invalid_votes?.length > 0 && (
+                <>
+                  <h4>❌ Vote Invalid (Hash Mismatch):</h4>
+                  <table style={{ width: "100%", borderCollapse: "collapse", marginBottom: "20px" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ border: "1px solid #ddd", padding: "8px", textAlign: "left" }}>NIM</th>
+                        <th style={{ border: "1px solid #ddd", padding: "8px", textAlign: "left" }}>Alasan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.invalid_votes?.map((inv, idx) => (
+                        <tr key={idx}>
+                          <td style={{ border: "1px solid #ddd", padding: "8px" }}>{inv.nim}</td>
+                          <td style={{ border: "1px solid #ddd", padding: "8px" }}>{inv.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
+              
+              {data.missing_hash?.length > 0 && (
+                <>
+                  <h4>⚠️ Hash Tidak Ditemukan:</h4>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr>
+                        <th style={{ border: "1px solid #ddd", padding: "8px", textAlign: "left" }}>NIM</th>
+                        <th style={{ border: "1px solid #ddd", padding: "8px", textAlign: "left" }}>Alasan</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {data.missing_hash?.map((miss, idx) => (
+                        <tr key={idx}>
+                          <td style={{ border: "1px solid #ddd", padding: "8px" }}>{miss.nim}</td>
+                          <td style={{ border: "1px solid #ddd", padding: "8px" }}>{miss.reason}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </>
+              )}
             </div>
           )}
         </div>
       )}
-
-      {/* Informasi tambahan */}
-      <div style={{ 
-        border: "1px solid #ddd", 
-        padding: "15px", 
-        borderRadius: "8px", 
-        marginTop: "20px",
-        backgroundColor: "#f9f9f9"
-      }}>
-        <h4>📋 Informasi:</h4>
-        <ul>
-          <li>Total vote terdaftar: {data.total_votes || 0}</li>
-          <li>Vote yang berhasil didekripsi: {data.total_valid || 0}</li>
-          <li>Vote yang gagal/gagal: {data.total_invalid || 0}</li>
-        </ul>
-      </div>
 
       <button 
         onClick={fetchData} 

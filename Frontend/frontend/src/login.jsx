@@ -3,7 +3,7 @@ import { useNavigate } from "react-router-dom"
 
 const API_URL = "http://localhost:8000/login"
 
-export default function Login({ onLoginSuccess }) {  // ← terima props
+export default function Login({ onLoginSuccess }) {
   const [nim, setNim] = useState("")
   const [password, setPassword] = useState("")
   const [loading, setLoading] = useState(false)
@@ -22,12 +22,16 @@ export default function Login({ onLoginSuccess }) {  // ← terima props
       const data = await res.json()
 
       if (data.success) {
+        // PASTIKAN INI TERSIMPAN SEMUA
         localStorage.setItem("auth", "true")
         localStorage.setItem("role", data.status) // admin / student
+        localStorage.setItem("nim", data.nim)     // ← PENTING! Simpan NIM
         
-        // Panggil callback untuk update state di App
+        console.log("Login berhasil, NIM tersimpan:", data.nim) // Debug
+        
+        // Panggil callback
         if (onLoginSuccess) {
-          onLoginSuccess()
+          onLoginSuccess(data.nim, data.status)
         }
         
         navigate("/")
@@ -35,6 +39,7 @@ export default function Login({ onLoginSuccess }) {  // ← terima props
         alert(data.message)
       }
     } catch (error) {
+      console.error("Login error:", error)
       alert("Login gagal: " + error.message)
     } finally {
       setLoading(false)
