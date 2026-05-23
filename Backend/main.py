@@ -2,12 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from RSA import RSAEncryptor
-#import RSA_key_gen
 from hashing import hash_message
 import psycopg2
 from psycopg2 import Binary
 from collections import Counter
 import json
+###JANGAN DIHAPUS, INI UNTUK GENERATE KEY RSA, JALANKAN SEKALI SAJA LALU HAPUS FILE PEMNYA
+#import RSA_key_gen 
 
 
 ##SETUP FASTAPI
@@ -94,6 +95,10 @@ def submit_vote(vote: Vote):
         conn.close()
         conn1.close()
 
+
+##-----------------------------------------
+##TAHP 2: REKAP HASIL VOTE, MENGAMBIL DATA DARI DATABASE, DECRYPT, DAN MENGHITUNG HASILNYA
+##-----------------------------------------
 @app.get("/recap")
 def recap_vote():
 
@@ -110,7 +115,6 @@ def recap_vote():
         for (encrypted_vote,) in rows:
 
             try:
-                # FIX: memoryview → bytes
                 if isinstance(encrypted_vote, memoryview):
                     encrypted_vote = encrypted_vote.tobytes()
 
