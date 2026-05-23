@@ -73,7 +73,7 @@ def login(data: LoginRequest):
     cur = conn.cursor()
 
     cur.execute(
-        "SELECT passw FROM users WHERE nim = %s",
+        "SELECT passw, status FROM users WHERE nim = %s",
         (data.nim,)
     )
 
@@ -85,12 +85,16 @@ def login(data: LoginRequest):
     if not user:
         return {"success": False, "message": "User tidak ditemukan"}
 
-    db_password = user[0]
+    db_password, status = user
 
     if data.password == db_password:
-        return {"success": True, "message": "Login berhasil"}
-    else:
-        return {"success": False, "message": "Password salah"}
+        return {
+            "success": True,
+            "message": "Login berhasil",
+            "status": status   # 👈 penting
+        }
+
+    return {"success": False, "message": "Password salah"}
     
 
 @app.post("/vote")
