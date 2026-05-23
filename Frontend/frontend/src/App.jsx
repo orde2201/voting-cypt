@@ -2,6 +2,9 @@ import { useState, useEffect } from 'react'
 import './App.css'
 import { Routes, Route, Link } from 'react-router-dom'
 
+import Login from "./login"
+import ProtectedRoute from "./ProtectedRoute"
+
 const API_URL = "http://localhost:8000"
 
 function App() {
@@ -10,11 +13,31 @@ function App() {
       <nav style={{ marginBottom: "20px" }}>
         <Link to="/" style={{ marginRight: "10px" }}>Vote</Link>
         <Link to="/recap">Recap</Link>
+        <Link to="/login" style={{ marginLeft: "10px" }}>Login</Link>
       </nav>
 
       <Routes>
-        <Route path="/" element={<VoteForm />} />
-        <Route path="/recap" element={<Recap />} />
+        {/* LOGIN PAGE (bebas akses) */}
+        <Route path="/login" element={<Login />} />
+
+        {/* PROTECTED ROUTES */}
+        <Route
+          path="/"
+          element={
+            <ProtectedRoute>
+              <VoteForm />
+            </ProtectedRoute>
+          }
+        />
+
+        <Route
+          path="/recap"
+          element={
+            <ProtectedRoute>
+              <Recap />
+            </ProtectedRoute>
+          }
+        />
       </Routes>
     </div>
   )

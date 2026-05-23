@@ -23,6 +23,7 @@ app.add_middleware(
 )
 
 ##SETUP DATABASE CONNECTION
+##database untuk menampung vote yang sudah diencrypt dan hashnya
 def get_conn_vote():
     return psycopg2.connect(
         dbname="votedata",
@@ -32,9 +33,20 @@ def get_conn_vote():
         port="5432"
     )
 
+##database untuk menampung hash dari vote yang sudah diencrypt, digunakan untuk verifikasi hasil vote
 def get_conn_verify():
     return psycopg2.connect(
         dbname="verify_vote",
+        user="postgres",
+        password="postgres",
+        host="db1",
+        port="5432"
+    )
+
+##database untuk menampung data user, digunakan untuk login
+def get_conn_login():
+    return psycopg2.connect(
+        dbname="userdata",
         user="postgres",
         password="postgres",
         host="db1",
@@ -48,16 +60,46 @@ class Vote(BaseModel):
     nim: str
     kandidat: str
 
+class LoginRequest(BaseModel):
+    nim: str
+    password: str
 ##-----------------------------------------
 ##TAHP 1: Menerima data vote dari frontend lalu menyimpan ke database
 ##-----------------------------------------
+@app.post("/login")
+def login(data: LoginRequest):
+
+    conn = get_conn_login()
+    cur = conn.cursor()
+
+    cur.execute(
+        "SELECT passw FROM users WHERE nim = %s",
+        (data.nim,)
+    )
+
+    user = cur.fetchone()
+
+    cur.close()
+    conn.close()
+
+    if not user:
+        return {"success": False, "message": "User tidak ditemukan"}
+
+    db_password = user[0]
+
+    if data.password == db_password:
+        return {"success": True, "message": "Login berhasil"}
+    else:
+        return {"success": False, "message": "Password salah"}
+    
+
 @app.post("/vote")
 def submit_vote(vote: Vote):
-
+    #Melakukan enkripsi pada data vote yang diterima dari frontend + oeap
     encrypted_vote = RSAEncryptor().encrypt(
         vote.model_dump_json()
     )
-
+    #Menghitung hash dari data vote yang sudah diencrypt, digunakan untuk verifikasi hasil vote
     vote_hash = hash_message(encrypted_vote)
 
     conn = get_conn_vote()
@@ -67,13 +109,13 @@ def submit_vote(vote: Vote):
     cur1 = conn1.cursor()
 
     try:
-        # DB 1
+        # insert ke database uservote, menyimpan data vote yang sudah diencrypt beserta hashnya
         cur.execute(
             "INSERT INTO userVote (voter_id, vote, vote_hash) VALUES (%s, %s, %s)",
             (vote.nim, Binary(encrypted_vote), vote_hash)
         )
 
-        # DB 2
+        # insert ke database hashing, menyimpan hash dari data vote yang sudah diencrypt, digunakan untuk verifikasi hasil vote
         cur1.execute(
             "INSERT INTO hashing (vote_id, hash) VALUES (%s, %s)",
             (vote.nim, vote_hash)
