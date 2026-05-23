@@ -1,4 +1,50 @@
-fastapi
-uvicorn
-psycopg2-binary
-cryptography
+
+
+# ============================================================
+# REQUIREMENTS.TXT - Voting System Backend Dependencies
+# ============================================================
+# Install semua dependencies dengan:
+# pip install -r requirements.txt
+# ============================================================
+
+# ============================================================
+# Web Framework
+# ============================================================
+fastapi         # Web framework untuk building API
+uvicorn # ASGI server untuk menjalankan FastAPI
+python-multipart  # Untuk parsing form data (jika diperlukan)
+
+# ============================================================
+# Database
+# ============================================================
+psycopg2-binary   # PostgreSQL adapter untuk Python
+# psycopg2==2.9.9         # Gunakan ini untuk production (perlu compiled)
+
+# ============================================================
+# Cryptography & Security
+# ============================================================
+pycryptodome     # Implementasi RSA, OAEP, dan algoritma kriptografi
+# cryptography==41.0.7    # Alternatif (jika pycryptodome bermasalah)
+cryptography    # Untuk hashing dan utilitas kriptografi tambahan
+
+# ============================================================
+# Data Validation & Serialization
+# ============================================================
+pydantic          # Data validation menggunakan Python type hints
+pydantic-core    # Core dependencies untuk pydantic
+email-validator   # Validasi email (optional, untuk pydantic)
+
+# ============================================================
+# Utilities
+# ============================================================
+python-dotenv      # Untuk membaca environment variables dari .env file
+# ============================================================
+
+# ============================================================
+# DEVELOPMENT ONLY (Optional - untuk development)
+# ============================================================
+# pytest==7.4.3            # Testing framework
+# httpx==0.25.1            # HTTP client untuk testing
+# black==23.11.0           # Code formatter
+# flake8==6.1.0            # Linter
+# ============================================================
